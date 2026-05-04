@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 """
-
-Ludwig's RingCentral ACE Transcript Downloader
-    The script will ask for everything it needs.
-    Credentials are never saved to disk.
-
+RingCentral ACE Transcript Downloader
 ======================================
+Downloads all RingSense call transcripts from a customer account.
+
+Saves to the same folder as this script:
+    transcripts_[customer]_[date].xlsx   -- Excel spreadsheet
+    transcripts_[customer]_[date].pdf    -- Formatted PDF
 
 Run:
     python3 download_transcripts.py
-        
-Downloads all RingSense call transcripts from a customer account.  The python connects to RingCentral's API, pulls every recorded call across the entire account, fetches the AI-generated transcript, summary, and sentiment for each one. It handles rate limits automatically, retries failed requests, and only downloads transcripts for calls where a RingSense license is assigned. Downloads all RingSense call transcripts from a customer's RingCentral account and saves two files to your Mac:
 
-Saves to the same folder as this script:
-    transcripts_[customer]_[date].xlsx   -- Excel spreadsheet — all calls with metadata, AI summaries, and full transcripts 
-    transcripts_[customer]_[date].pdf    -- Formatted PDF — formatted, branded transcript book with sentiment badges and AI summaries
-
-
+The script will ask for everything it needs.
+Credentials are never saved to disk.
 """
 
 import sys
@@ -118,11 +114,157 @@ def confirm(prompt):
     return input("  " + prompt + " (y/n): ").strip().lower() in ("y", "yes")
 
 
+# ── Company lookup by scraping website ───────────────────────────────────────
+def lookup_company(url):
+    """
+    Fetches the company homepage and any /about page, extracts visible text,
+    then uses simple heuristics to summarise what the company does and how
+    they make money.  No API key required.
+    """
+    install("beautifulsoup4", "beautifulsoup4")
+    from bs4 import BeautifulSoup
+
+    info("Looking up company info from " + url + " ...")
+
+    def fetch_text(target_url):
+        try:
+            r = requests.get(
+                target_url,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ACE-Scout/1.0)"},
+                allow_redirects=True,
+            )
+            if r.status_code != 200:
+                return ""
+            soup = BeautifulSoup(r.text, "html.parser")
+            # Remove nav, footer, scripts, styles
+            for tag in soup(["nav", "footer", "script", "style", "header"]):
+                tag.decompose()
+            # Grab all visible text
+            text = " ".join(soup.stripped_strings)
+            # Collapse whitespace
+            text = re.sub(r"\s+", " ", text).strip()
+            return text[:8000]
+        except Exception:
+            return ""
+
+    # Try homepage then /about
+    home_text  = fetch_text(url)
+    about_text = fetch_text(url.rstrip("/") + "/about")
+    combined   = (home_text + " " + about_text).strip()
+
+    if not combined:
+        warn("Could not fetch company website")
+        return None
+
+    # ── Extract what the company does ────────────────────────────────────────
+    # Look for sentences containing strong indicator words
+    what_keywords = [
+        "we provide", "we offer", "we deliver", "we help", "we build",
+        "we develop", "we create", "we manufacture", "we supply", "we specialize",
+        "our mission", "our products", "our services", "our solutions",
+        "company is", "company provides", "company offers", "leader in",
+        "provider of", "supplier of", "manufacturer of", "distributor of",
+    ]
+    money_keywords = [
+        "revenue", "subscription", "licensing", "fees", "contract", "sale",
+        "pricing", "per user", "annually", "monthly", "customers pay",
+        "clients pay", "charged", "billing", "invoice", "purchase",
+        "enterprise", "commercial", "b2b", "b2c", "marketplace",
+    ]
+
+    sentences = re.split(r"(?<=[.!?])\s+", combined)
+
+    what_sentences  = []
+    money_sentences = []
+
+    for sent in sentences:
+        sl = sent.lower()
+        score_what  = sum(1 for k in what_keywords  if k in sl)
+        score_money = sum(1 for k in money_keywords if k in sl)
+        if score_what  > 0 and len(sent) > 30 and len(sent) < 300:
+            what_sentences.append((score_what, sent.strip()))
+        if score_money > 0 and len(sent) > 30 and len(sent) < 300:
+            money_sentences.append((score_money, sent.strip()))
+
+    what_sentences.sort(key=lambda x: -x[0])
+    money_sentences.sort(key=lambda x: -x[0])
+
+    what_text  = " ".join(s for _, s in what_sentences[:3])
+    money_text = " ".join(s for _, s in money_sentences[:2])
+
+    # Fallback: just grab the first 2 sentences from homepage
+    if not what_text and sentences:
+        what_text = " ".join(s.strip() for s in sentences[:2] if len(s) > 20)
+
+    if not what_text and not money_text:
+        warn("Could not extract useful company info from website")
+        return None
+
+    result = ""
+    if what_text:
+        result += "WHAT THEY DO: " + what_text
+    if money_text:
+        result += "\n\nHOW THEY MAKE MONEY: " + money_text
+
+    return result.strip() if result.strip() else None
+
+
+def print_company_info(url, info_text):
+    if not info_text:
+        return
+
+    def wrap_print(text, indent="  "):
+        words = text.split()
+        line  = ""
+        for word in words:
+            if len(line) + len(word) + 1 > 56:
+                if line:
+                    print(indent + line)
+                line = word
+            else:
+                line = (line + " " + word).strip()
+        if line:
+            print(indent + line)
+
+    print("")
+    print("  " + BOLD + "Company Overview" + W + "  " + DIM + url + W)
+    print("  " + DIM + "=" * 52 + W)
+
+    # Split on the two section headers
+    sections = info_text.split("\n\n")
+    for section in sections:
+        if section.startswith("WHAT THEY DO:"):
+            print("  " + BOLD + G + "What they do:" + W)
+            wrap_print(section.replace("WHAT THEY DO:", "").strip(), "    ")
+        elif section.startswith("HOW THEY MAKE MONEY:"):
+            print("")
+            print("  " + BOLD + G + "How they make money:" + W)
+            wrap_print(section.replace("HOW THEY MAKE MONEY:", "").strip(), "    ")
+        else:
+            wrap_print(section.strip())
+
+    print("  " + DIM + "=" * 52 + W)
+    print("")
+
+
 # ── Step 1: Collect credentials ───────────────────────────────────────────────
 def collect_credentials():
     header("STEP 1 -- Customer & Credentials")
     rule()
+
+    # Company URL lookup
+    print("")
+    raw_url = ask("Customer website URL (e.g. acmecorp.com)")
+    company_url = raw_url
+    if company_url and not company_url.startswith("http"):
+        company_url = "https://" + company_url
+
+    company_info = lookup_company(company_url) if company_url else None
+    print_company_info(company_url, company_info)
+
     print("""
+  Now enter your RingCentral credentials.
   You need three things from developers.ringcentral.com:
 
     Client ID      -- from your app Credentials tab
@@ -134,6 +276,8 @@ def collect_credentials():
 """)
     return {
         "customer_name": ask("Customer company name"),
+        "company_url":   company_url,
+        "company_info":  company_info or "",
         "client_id":     ask("Client ID"),
         "client_secret": ask("Client Secret", secret=True),
         "jwt_token":     ask("JWT Token",     secret=True),
