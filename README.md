@@ -99,9 +99,8 @@ On the same app page:
 2. Click **Create JWT**
 3. Name it: `ACE Downloader`
 4. Click **Create**
-5. **Copy the token immediately** — it is only shown once
+5. **Copy the token** 
 
-> If you close the page without copying it, you will need to delete it and create a new one.
 
 ---
 
