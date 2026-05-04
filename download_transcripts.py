@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Ludwig's RingCentral ACE Transcript Downloader
-======================================
-Downloads all RingSense call transcripts from a customer account.
 
-Saves to the same folder as this script:
-    transcripts_[customer]_[date].xlsx   -- Excel spreadsheet
-    transcripts_[customer]_[date].pdf    -- Formatted PDF
+Ludwig's RingCentral ACE Transcript Downloader
+    The script will ask for everything it needs.
+    Credentials are never saved to disk.
+
+======================================
 
 Run:
     python3 download_transcripts.py
+        
+Downloads all RingSense call transcripts from a customer account.  The python connects to RingCentral's API, pulls every recorded call across the entire account, fetches the AI-generated transcript, summary, and sentiment for each one. It handles rate limits automatically, retries failed requests, and only downloads transcripts for calls where a RingSense license is assigned. Downloads all RingSense call transcripts from a customer's RingCentral account and saves two files to your Mac:
 
-The script will ask for everything it needs.
-Credentials are never saved to disk.
+Saves to the same folder as this script:
+    transcripts_[customer]_[date].xlsx   -- Excel spreadsheet — all calls with metadata, AI summaries, and full transcripts 
+    transcripts_[customer]_[date].pdf    -- Formatted PDF — formatted, branded transcript book with sentiment badges and AI summaries
+
+
 """
 
 import sys
